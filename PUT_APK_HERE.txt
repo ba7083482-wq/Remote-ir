@@ -1,0 +1,2 @@
+Upload your original APK in this folder with the exact name PhoneRemote.apk.
+Do not upload signing keys or passwords.

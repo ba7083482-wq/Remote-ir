@@ -1,0 +1,64 @@
+name: Inspect PhoneRemote APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify input APK
+        run: |
+          test -s input/PhoneRemote.apk || { echo 'Missing input/PhoneRemote.apk. Upload your original APK there.'; exit 1; }
+          mkdir -p output/apktool output/jadx
+
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jre-headless
+          curl -L --fail -o /tmp/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+          curl -L --fail -o /tmp/jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          mkdir -p /tmp/jadx
+          unzip -q /tmp/jadx.zip -d /tmp/jadx
+          echo '#!/bin/sh' | sudo tee /usr/local/bin/apktool >/dev/null
+          echo 'exec java -jar /tmp/apktool.jar "$@"' | sudo tee -a /usr/local/bin/apktool >/dev/null
+          sudo chmod +x /usr/local/bin/apktool
+          echo '/tmp/jadx/bin' >> "$GITHUB_PATH"
+
+      - name: Decode resources and manifest
+        run: apktool d -f input/PhoneRemote.apk -o output/apktool
+
+      - name: Decompile DEX to Java
+        run: jadx --show-bad-code -d output/jadx input/PhoneRemote.apk
+
+      - name: Create IR and network investigation report
+        shell: bash
+        run: |
+          {
+            echo '# PhoneRemote APK inspection report'
+            echo
+            echo 'This is a static search, not proof that a feature is used by a particular button.'
+            echo
+            echo '## IR-related matches'
+            grep -RniE 'ConsumerIrManager|hasIrEmitter|transmit\(|infrared|\bIR\b|carrierFrequency|frequency' output/apktool output/jadx --include='*.xml' --include='*.smali' --include='*.java' 2>/dev/null | head -500 || true
+            echo
+            echo '## Network-related matches'
+            grep -RniE 'WifiManager|android.permission.INTERNET|Socket|OkHttp|Retrofit|HttpURLConnection|WebSocket|multicast' output/apktool output/jadx --include='*.xml' --include='*.smali' --include='*.java' 2>/dev/null | head -500 || true
+            echo
+            echo '## Manifest permissions and components'
+            sed -n '1,260p' output/apktool/AndroidManifest.xml
+          } > output/inspection-report.md
+
+      - name: Upload inspection artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonremote-inspection
+          path: output/
+          if-no-files-found: error
+          retention-days: 14
